@@ -182,97 +182,99 @@ if (highestInfusionIndex !== undefined) {
         // eslint-disable-next-line no-console
         console.log("Pre-inspection from path " + __dirname + " resolved to infusion at higher path " + highestInfusionPath);
         module.exports = infusionModule;
-        return;
+    }
+    // First time we avoid using return to avoid errors with webpack.
+    else {
+        // Method 2: Resolve to any infusion which is observable to the standard node loader at a path strictly higher than ours
+        // TODO: Is this completely subsumed by Method 1?
+
+        var upInfusion;
+
+        var upPath = path.resolve(__dirname, "../../../../..");
+        var upInfusionPath = fluid.module.resolveSync("infusion", upPath);
+        if (upInfusionPath) {
+            upInfusion = require(upInfusionPath);
+        }
+
+        // Fix for FLUID-5940, when Infusion is a dependency of a Node.js project that is located in the
+        // root of a filesystem we were resolving to the current version of Infusion. Doing a 'require'
+        // on the same version of Infusion results in an empty object since we have not completed our own assignment to
+        // module.exports yet
+        if (upInfusion && upInfusion.module) {
+            // eslint-disable-next-line no-console
+            console.log("Resolved infusion from path " + __dirname + " to " + upInfusion.module.modules.infusion.baseDir);
+            module.exports = upInfusion;
+            // Second instance of return removed to avoid issues with webpack.
+        } else {
+            // eslint-disable-next-line no-console
+            console.log("Infusion at path " + moduleBaseDir + " is at top level ");
+
+            // If we reach here without hitting the "return" statements above, we believe ourselves to be the highest resolvable
+            // Infusion in the filesystem. If we are wrong, some other Infusion has already registered itself in node's
+            // pan-module global registry - if we find it there, we should bail out with a fatal error since corruption will
+            // shortly soon result in the grade registry and component tree.
+
+            if (global.fluid) {
+                var oldPath = global.fluid.module.modules.infusion.baseDir;
+                fluid.fail("Error loading infusion - infusion has already been loaded from the path \n\t" + path.resolve(oldPath) +
+                    "\n - please delete the duplicate copy which is found at \n\t" + path.resolve(__dirname));
+            }
+
+            // Pre-inspect any other module (there should be at most one) which is loading at top level so that it is self-resolvable
+            // via fluid.require("%other-module") for whatever it is
+
+            fluid.module.preInspect();
+
+            fluid.module.register("infusion", moduleBaseDir, require);
+
+            // Export the fluid object into the pan-module node.js global object
+            global.fluid = fluid;
+
+
+            /** Registering and instrumenting uncaught exception handler:
+             * Do this after determining that we are top-level Infusion to avoid FLUID-6225
+             */
+            process.on("uncaughtException", function onUncaughtException(err) {
+                fluid.onUncaughtException.fire(err);
+            });
+
+            fluid.onUncaughtException = fluid.makeEventFirer({
+                name: "Global uncaught exception handler"
+            });
+
+            // This registry of priorities will be removed once the implementation of FLUID-5506 is complete
+            fluid.handlerPriorities = {
+                uncaughtException: {
+                    log: 100, // high priority - do all logging first
+                    logActivity: "after:log",
+                    fail: "last"
+                }
+            };
+
+            fluid.logUncaughtException = function (err) {
+                var message = "FATAL ERROR: Uncaught exception: " + err.message;
+                fluid.log(fluid.logLevel.FATAL, message);
+                console.log(err.stack || "(No error stack)"); // eslint-disable-line no-console
+            };
+
+            fluid.onUncaughtException.addListener(fluid.logUncaughtException, "log",
+                fluid.handlerPriorities.uncaughtException.log);
+
+            fluid.onUncaughtException.addListener(function () {fluid.logActivity();}, "logActivity",
+                fluid.handlerPriorities.uncaughtException.logActivity);
+
+
+            // Make sure process exits with error (see FLUID-5920)
+            fluid.handleUncaughtException = function () {
+                process.exit(1);
+            };
+
+            fluid.onUncaughtException.addListener(fluid.handleUncaughtException, "fail",
+                fluid.handlerPriorities.uncaughtException.fail);
+
+
+            module.exports = fluid;
+        }
     }
 }
 
-// Method 2: Resolve to any infusion which is observable to the standard node loader at a path strictly higher than ours
-// TODO: Is this completely subsumed by Method 1?
-
-var upInfusion;
-
-var upPath = path.resolve(__dirname, "../../../../..");
-var upInfusionPath = fluid.module.resolveSync("infusion", upPath);
-if (upInfusionPath) {
-    upInfusion = require(upInfusionPath);
-}
-
-// Fix for FLUID-5940, when Infusion is a dependency of a Node.js project that is located in the
-// root of a filesystem we were resolving to the current version of Infusion. Doing a 'require'
-// on the same version of Infusion results in an empty object since we have not completed our own assignment to
-// module.exports yet
-if (upInfusion && upInfusion.module) {
-    // eslint-disable-next-line no-console
-    console.log("Resolved infusion from path " + __dirname + " to " + upInfusion.module.modules.infusion.baseDir);
-    module.exports = upInfusion;
-    return;
-} else {
-    // eslint-disable-next-line no-console
-    console.log("Infusion at path " + moduleBaseDir + " is at top level ");
-}
-
-// If we reach here without hitting the "return" statements above, we believe ourselves to be the highest resolvable
-// Infusion in the filesystem. If we are wrong, some other Infusion has already registered itself in node's
-// pan-module global registry - if we find it there, we should bail out with a fatal error since corruption will
-// shortly soon result in the grade registry and component tree.
-
-if (global.fluid) {
-    var oldPath = global.fluid.module.modules.infusion.baseDir;
-    fluid.fail("Error loading infusion - infusion has already been loaded from the path \n\t" + path.resolve(oldPath) +
-        "\n - please delete the duplicate copy which is found at \n\t" + path.resolve(__dirname));
-}
-
-// Pre-inspect any other module (there should be at most one) which is loading at top level so that it is self-resolvable
-// via fluid.require("%other-module") for whatever it is
-
-fluid.module.preInspect();
-
-fluid.module.register("infusion", moduleBaseDir, require);
-
-// Export the fluid object into the pan-module node.js global object
-global.fluid = fluid;
-
-
-/** Registering and instrumenting uncaught exception handler:
- * Do this after determining that we are top-level Infusion to avoid FLUID-6225
- */
-process.on("uncaughtException", function onUncaughtException(err) {
-    fluid.onUncaughtException.fire(err);
-});
-
-fluid.onUncaughtException = fluid.makeEventFirer({
-    name: "Global uncaught exception handler"
-});
-
-// This registry of priorities will be removed once the implementation of FLUID-5506 is complete
-fluid.handlerPriorities = {
-    uncaughtException: {
-        log: 100, // high priority - do all logging first
-        logActivity: "after:log",
-        fail: "last"
-    }
-};
-
-fluid.logUncaughtException = function (err) {
-    var message = "FATAL ERROR: Uncaught exception: " + err.message;
-    fluid.log(fluid.logLevel.FATAL, message);
-    console.log(err.stack || "(No error stack)"); // eslint-disable-line no-console
-};
-
-fluid.onUncaughtException.addListener(fluid.logUncaughtException, "log",
-    fluid.handlerPriorities.uncaughtException.log);
-
-fluid.onUncaughtException.addListener(function () {fluid.logActivity();}, "logActivity",
-    fluid.handlerPriorities.uncaughtException.logActivity);
-
-
-// Make sure process exits with error (see FLUID-5920)
-fluid.handleUncaughtException = function () {
-    process.exit(1);
-};
-
-fluid.onUncaughtException.addListener(fluid.handleUncaughtException, "fail",
-    fluid.handlerPriorities.uncaughtException.fail);
-
-
-module.exports = fluid;
