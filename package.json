@@ -17,8 +17,9 @@
         "evented"
     ],
     "repository": "git://github.com/fluid-project/infusion.git",
-    "main": "./src/module/fluid.js",
+    "main": "./dist/infusion-framework.js",
     "scripts": {
+        "postinstall": "npm run build",
         "prebuild": "run-s clean:dist deps build:sass:min",
         "build": "run-p build:dist:*",
         "build:dist:all": "npm run build:util:modules -- -o ./dist",
